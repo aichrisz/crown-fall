@@ -586,8 +586,11 @@ test('match history stays newest-first, capped at twenty, and free of anything p
   assert.equal(typeof appendHistory, 'function', 'appendHistory must exist');
   const match = playSelfMatch('CROWN-FALL-019');
   const entry = historyEntry(match.state);
-  assert.deepEqual(Object.keys(entry).sort(), ['crowns', 'mode', 'reason', 'seed', 'share', 'turns', 'winner']);
+  assert.deepEqual(Object.keys(entry).sort(), ['crowns', 'doctrine', 'mode', 'reason', 'seed', 'share', 'turns', 'winner']);
   assert.equal(entry.share, match.share);
+  assert.equal(entry.doctrine, 'warden', 'the anonymous entry records which doctrine played');
+  assert.equal(historyEntry(playSelfMatch('CROWN-FALL-019', { doctrine: 'reaper' }).state).doctrine, 'reaper');
+  assert.equal(historyEntry({ ...match.state, doctrine: 'nonsense' }).doctrine, 'warden', 'only catalogued ids are stored');
 
   const first = appendHistory([], entry);
   assert.equal(first.length, 1);
@@ -602,7 +605,7 @@ test('match history stays newest-first, capped at twenty, and free of anything p
   assert.equal(list[HISTORY_LIMIT - 1].seed, 'S-10', 'the oldest entries fall off');
 
   const dirty = appendHistory([], { ...entry, playerName: 'Ada', email: 'a@b.c', ip: '10.0.0.1' });
-  assert.deepEqual(Object.keys(dirty[0]).sort(), ['crowns', 'mode', 'reason', 'seed', 'share', 'turns', 'winner']);
+  assert.deepEqual(Object.keys(dirty[0]).sort(), ['crowns', 'doctrine', 'mode', 'reason', 'seed', 'share', 'turns', 'winner']);
   assert.equal(JSON.stringify(dirty).includes('Ada'), false, 'no personal data is ever stored');
 });
 
@@ -1040,6 +1043,272 @@ test('the page module runs: it renders, places, reads, exports and drives the so
 });
 
 // --- SLICES BELOW ---
+
+/** Default-rival goldens captured before doctrines existed; warden must reproduce them. */
+const WARDEN_GOLDEN_SHARES = {
+  'CROWN-FALL-001': 'CF1~CROWN-FALL-001~P~3~0~87',
+  'CROWN-FALL-014': 'CF1~CROWN-FALL-014~P~3~2~23',
+  'CROWN-FALL-017': 'CF1~CROWN-FALL-017~P~3~1~21',
+  'SWEEP-000': 'CF1~SWEEP-000~P~3~0~45',
+  'SWEEP-042': 'CF1~SWEEP-042~P~3~1~41',
+  'SWEEP-119': 'CF1~SWEEP-119~P~3~1~53',
+};
+
+test('the doctrine catalog is frozen, defaults to warden, and warden reproduces the baseline rival exactly', () => {
+  const { DOCTRINES, DEFAULT_DOCTRINE, playSelfMatch, chooseMove, scoreMove } = engine;
+  assert.ok(Array.isArray(DOCTRINES), 'DOCTRINES must be an exported catalog');
+  assert.ok(Object.isFrozen(DOCTRINES), 'the catalog itself is immutable');
+  assert.ok(DOCTRINES.length >= 3, 'warden plus at least two named alternatives');
+  assert.equal(DEFAULT_DOCTRINE, 'warden', 'the default doctrine is warden');
+  assert.equal(new Set(DOCTRINES.map(d => d.id)).size, DOCTRINES.length, 'doctrine ids are unique');
+  for (const doctrine of DOCTRINES) {
+    assert.ok(Object.isFrozen(doctrine), `${doctrine.id} entry must be frozen`);
+    assert.ok(Object.isFrozen(doctrine.weights), `${doctrine.id} weights must be frozen`);
+    assert.match(doctrine.id, /^[a-z][a-z0-9-]*$/, 'ids are plain lowercase tokens');
+    assert.ok(doctrine.name.length >= 3, `${doctrine.id} must be named`);
+    assert.ok(doctrine.blurb.length >= 24, `${doctrine.id} must describe its own priorities`);
+  }
+
+  const warden = DOCTRINES.find(d => d.id === 'warden');
+  assert.ok(warden, 'warden is in the catalog');
+  assert.deepEqual(
+    warden.weights,
+    {
+      crownGain: 140,
+      crownDenial: 110,
+      capture: 9,
+      territoryGain: 4,
+      territoryLoss: 3,
+      dissipation: 2,
+      victory: 400,
+      loadedThreat: 6,
+      threatEnemy: 2,
+      threatNeutral: 1,
+      threatCrown: 4,
+      crownProximity: 1,
+    },
+    'warden carries the pre-doctrine scoring literals verbatim',
+  );
+
+  // The two-argument / three-argument calls and the default rival are untouched.
+  const game = createGame('CROWN-FALL-014', { mode: 'solo' });
+  const pick = chooseMove(game, 'player');
+  assert.ok(Number.isInteger(pick), 'chooseMove(state, owner) still returns a move');
+  assert.equal(scoreMove(game, 'player', pick).index, pick, 'scoreMove(state, owner, index) still scores');
+  for (const [seed, share] of Object.entries(WARDEN_GOLDEN_SHARES)) {
+    assert.equal(playSelfMatch(seed).share, share, `${seed} default self-play must be byte-identical`);
+  }
+});
+
+test('a doctrine id is normalized once and threaded through state, options, validation and replay', () => {
+  const { normalizeDoctrine, DEFAULT_DOCTRINE, applyMove, chooseMove, playSelfMatch, validateState, replayMoves, formatShare } = engine;
+  assert.equal(typeof normalizeDoctrine, 'function', 'normalizeDoctrine must exist');
+  assert.equal(normalizeDoctrine('reaper'), 'reaper');
+  assert.equal(normalizeDoctrine('REAPER'), 'reaper', 'case is normalised');
+  assert.equal(normalizeDoctrine('  surveyor '), 'surveyor', 'padding is trimmed');
+  for (const junk of ['nonsense', '', null, undefined, 7, {}, 'warden-x']) {
+    assert.equal(normalizeDoctrine(junk), DEFAULT_DOCTRINE, `${String(junk)} falls back to warden`);
+  }
+
+  // createGame carries the normalized id; unknown ids normalize at the boundary.
+  assert.equal(createGame('DOCTRINE-01').doctrine, 'warden', 'the default is warden');
+  assert.equal(createGame('DOCTRINE-01', { doctrine: 'reaper' }).doctrine, 'reaper');
+  assert.equal(createGame('DOCTRINE-01', { doctrine: 'REAPER' }).doctrine, 'reaper');
+  assert.equal(createGame('DOCTRINE-01', { doctrine: 'nonsense' }).doctrine, 'warden', 'unknown ids normalize to warden');
+
+  // The doctrine survives a turn and steers chooseMove: state, then explicit override.
+  const reaper = createGame('DOCTRINE-01', { mode: 'solo', doctrine: 'reaper' });
+  const advanced = applyMove(reaper, reaper.bases.playerIndex);
+  assert.equal(advanced.doctrine, 'reaper', 'applyMove carries the doctrine');
+  assert.equal(chooseMove(reaper, 'player'), chooseMove(reaper, 'player', { doctrine: 'reaper' }), 'state doctrine is used when no option is given');
+  assert.equal(
+    chooseMove({ ...reaper, doctrine: 'nonsense' }, 'player'),
+    chooseMove(reaper, 'player', { doctrine: 'warden' }),
+    'an unusable state doctrine resolves to warden',
+  );
+
+  // playSelfMatch and replay both take and report the normalized id.
+  const match = playSelfMatch('DOCTRINE-01', { doctrine: 'surveyor' });
+  assert.equal(match.doctrine, 'surveyor', 'self-play reports the doctrine it played');
+  assert.equal(match.state.doctrine, 'surveyor');
+  assert.equal(playSelfMatch('DOCTRINE-01', { doctrine: 'nope' }).doctrine, 'warden');
+  const replayed = replayMoves('DOCTRINE-01', match.state.moves, { mode: 'solo', doctrine: 'surveyor' });
+  assert.equal(JSON.stringify(replayed), JSON.stringify(match.state), 'the log replays exactly under its doctrine');
+
+  // Result strings are untouched by doctrines.
+  assert.equal(formatShare(match.state).split('~').length, 6, 'CF1 strings keep their six fields');
+  assert.match(formatShare(match.state), /^CF1~DOCTRINE-01~[PRD]~\d+~\d+~\d+$/);
+
+  // Validation flags an unknown doctrine and accepts every catalogued one.
+  assert.deepEqual(validateState(reaper), [], 'a doctrine-carrying game is valid');
+  assert.ok(
+    validateState({ ...reaper, doctrine: 'nonsense' }).some(p => /doctrine/i.test(p)),
+    'validateState flags an unknown doctrine id',
+  );
+});
+
+test('the extra doctrines diverge on pinned positions while staying legal and deterministic', () => {
+  const { chooseMove, isLegalMove, indexOf } = engine;
+  const CROWNS = [indexOf(7, 7), indexOf(4, 4), indexOf(10, 10), indexOf(5, 9), indexOf(9, 5)];
+  const seedCrowns = state => {
+    state.crowns = [...CROWNS];
+    for (const c of state.crowns) state.cells[c].crown = true;
+  };
+
+  // Position A — an edge harvest that captures three enemy cells but spills a
+  // grain over the side, against a quiet interior fan that claims four neutrals.
+  const harvest = blankState({ current: 'rival' });
+  seedCrowns(harvest);
+  const edge = indexOf(0, 7);
+  harvest.cells[edge].owner = 'rival';
+  harvest.cells[edge].grains = 3;
+  for (const n of engine.neighborsOf(edge)) {
+    harvest.cells[n].owner = 'player';
+    harvest.cells[n].grains = 0;
+  }
+  const fan = indexOf(3, 10);
+  harvest.cells[fan].owner = 'rival';
+  harvest.cells[fan].grains = 3;
+
+  assert.equal(chooseMove(harvest, 'rival', { doctrine: 'warden' }), edge, 'warden takes the capture');
+  assert.equal(chooseMove(harvest, 'rival', { doctrine: 'reaper' }), edge, 'the reaper takes the capture too');
+  assert.equal(chooseMove(harvest, 'rival', { doctrine: 'surveyor' }), fan, 'the surveyor refuses to spill grains and spreads instead');
+
+  // Position B — a free crown claim against capturing four enemy cells.
+  const prize = blankState({ current: 'rival' });
+  seedCrowns(prize);
+  const crown = indexOf(7, 7);
+  prize.cells[indexOf(7, 8)].owner = 'rival';
+  const strike = indexOf(2, 2);
+  prize.cells[strike].owner = 'rival';
+  prize.cells[strike].grains = 3;
+  for (const n of engine.neighborsOf(strike)) {
+    prize.cells[n].owner = 'player';
+    prize.cells[n].grains = 0;
+  }
+
+  assert.equal(chooseMove(prize, 'rival', { doctrine: 'warden' }), crown, 'warden takes the crown');
+  assert.equal(chooseMove(prize, 'rival', { doctrine: 'surveyor' }), crown, 'the surveyor takes the crown as well');
+  assert.equal(chooseMove(prize, 'rival', { doctrine: 'reaper' }), strike, 'the reaper prefers four captures to a crown');
+
+  // Legality, determinism and null-on-no-moves hold for every doctrine.
+  const live = createGame('DOCTRINE-DIVERGE', { mode: 'solo' });
+  const stuck = blankState();
+  for (const doctrine of engine.DOCTRINES) {
+    for (const [state, owner] of [[harvest, 'rival'], [prize, 'rival'], [live, 'player']]) {
+      const pick = chooseMove(state, owner, { doctrine: doctrine.id });
+      assert.ok(isLegalMove(state, owner, pick), `${doctrine.id} must propose a legal move`);
+      assert.equal(chooseMove(state, owner, { doctrine: doctrine.id }), pick, `${doctrine.id} is deterministic`);
+    }
+    assert.equal(chooseMove(stuck, 'player', { doctrine: doctrine.id }), null, `${doctrine.id} yields null with no legal move`);
+  }
+});
+
+test('every doctrine survives a bounded multi-seed audit: terminal, valid, replayable, and genuinely explosive', () => {
+  const { DOCTRINES, playSelfMatch, validateState, replayMoves, applyMove, parseShare, TURN_CAP } = engine;
+  const seeds = ['AUDIT-000', 'AUDIT-001', 'AUDIT-002', 'AUDIT-003', 'AUDIT-004'];
+  const lines = [];
+  let audited = 0;
+  for (const doctrine of DOCTRINES) {
+    let topples = 0;
+    let captures = 0;
+    let longest = 0;
+    const winners = { player: 0, rival: 0, drawn: 0 };
+    for (const seed of seeds) {
+      const match = playSelfMatch(seed, { doctrine: doctrine.id });
+      audited += 1;
+      assert.equal(match.doctrine, doctrine.id, `${doctrine.id}/${seed} reports its doctrine`);
+      assert.ok(['won', 'ended'].includes(match.state.status), `${doctrine.id}/${seed} must reach a terminal state`);
+      assert.ok(match.turns > 0 && match.turns <= TURN_CAP, `${doctrine.id}/${seed} must finish inside the cap`);
+      assert.deepEqual(validateState(match.state), [], `${doctrine.id}/${seed} must end on a valid board`);
+      assert.equal(match.state.doctrine, doctrine.id, `${doctrine.id}/${seed} state carries the doctrine`);
+      assert.ok(parseShare(match.share), `${doctrine.id}/${seed} share string parses`);
+      assert.match(match.share, /^CF1~AUDIT-00\d~[PRD]~\d~\d~\d+$/, 'CF1 result strings gain no doctrine field');
+
+      // The logged moves replay exactly under the same doctrine.
+      let walk = replayMoves(seed, [], { mode: 'solo', doctrine: doctrine.id });
+      for (const move of match.state.moves) {
+        walk = applyMove(walk, move.index);
+        topples += walk.lastMove.waves.flat().length;
+        captures += walk.lastMove.captured.length;
+      }
+      assert.equal(JSON.stringify(walk), JSON.stringify(match.state), `${doctrine.id}/${seed} replays byte-identically`);
+      longest = Math.max(longest, match.turns);
+      if (match.winner === 'player') winners.player += 1;
+      else if (match.winner === 'rival') winners.rival += 1;
+      else winners.drawn += 1;
+    }
+    assert.equal(playSelfMatch(seeds[0], { doctrine: doctrine.id }).share, playSelfMatch(seeds[0], { doctrine: doctrine.id }).share, `${doctrine.id} self-play is reproducible`);
+    assert.ok(topples > 20, `${doctrine.id} must actually avalanche (saw ${topples} topples)`);
+    assert.ok(captures > 5, `${doctrine.id} must actually capture (saw ${captures})`);
+    lines.push(`${doctrine.id}: first ${winners.player} / second ${winners.rival} / drawn ${winners.drawn} · ${topples} topples · ${captures} captures · longest ${longest} turns`);
+  }
+  console.log(`    doctrine audit: ${audited} matches over ${seeds.length} seeds\n      ${lines.join('\n      ')}`);
+});
+
+test('the page offers a labelled rival-doctrine select: it names the doctrine, drives the rival, and is off in hotseat', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('./index.html', import.meta.url), 'utf8');
+  const { DOCTRINES, DEFAULT_DOCTRINE, createGame: build, applyMove, chooseMove } = engine;
+
+  // The control is labelled, and the page is honest about what a doctrine is.
+  assert.match(html, /<label for="doctrine">/, 'the select carries a real label element');
+  assert.match(html, /<select id="doctrine"/, 'a doctrine select exists beside the opponent control');
+  assert.match(html, /doctrine/i);
+  assert.match(html, /deterministic/i, 'the page says the doctrines are deterministic');
+  assert.match(html, /one[- ]ply|one move ahead|no search/i, 'and that none of them searches');
+
+  const script = /<script type="module">([\s\S]*?)<\/script>/.exec(html);
+  const engineUrl = new URL('./game.mjs', import.meta.url).href;
+  const source = `${script[1].replace("'./game.mjs'", JSON.stringify(engineUrl))}\n// doctrine-ui`;
+  const dom = installDomStub();
+  try {
+    await import(`data:text/javascript;base64,${Buffer.from(source, 'utf8').toString('base64')}`);
+    const doctrineSelect = dom.byId('doctrine');
+    assert.deepEqual(
+      doctrineSelect.children.map(option => option.value),
+      DOCTRINES.map(doctrine => doctrine.id),
+      'the select mirrors the catalog exactly',
+    );
+    for (const doctrine of DOCTRINES) {
+      assert.ok(
+        doctrineSelect.children.some(option => option.textContent.includes(doctrine.name)),
+        `${doctrine.id} is named in the select`,
+      );
+    }
+    assert.equal(doctrineSelect.value, DEFAULT_DOCTRINE, 'it opens on the default doctrine');
+    assert.equal(doctrineSelect.disabled, false, 'solo play lets you choose');
+    assert.match(dom.byId('read-out').textContent, /warden/i, 'the opening announcement names the doctrine');
+
+    // Choosing a doctrine starts a fresh match and says which doctrine it is.
+    dom.byId('seed').value = 'DOCTRINE-UI';
+    doctrineSelect.value = 'reaper';
+    doctrineSelect.__fire('change');
+    assert.match(dom.byId('status').textContent, /Turn 0 of 160/, 'changing the doctrine starts a new match');
+    assert.match(dom.byId('read-out').textContent, /reaper/i, 'the new match announces the chosen doctrine');
+
+    // The rival actually plays the chosen doctrine.
+    const cells = dom.byId('board').children.flatMap(row => row.children);
+    const playable = cells.find(cell => cell.dataset.legal === '1');
+    const humanMove = Number(playable.dataset.index);
+    playable.__fire('click');
+    await new Promise(resolve => { setTimeout(resolve, 600); });
+    const afterHuman = applyMove(build('DOCTRINE-UI', { mode: 'solo', doctrine: 'reaper' }), humanMove);
+    const expected = chooseMove(afterHuman, 'rival');
+    const played = cells.find(cell => cell.dataset.last === '1');
+    assert.equal(Number(played.dataset.index), expected, 'the rival replied with its doctrine’s move');
+
+    // Hotseat has no rival, so the control is disabled rather than misleading.
+    dom.byId('mode').value = 'hotseat';
+    dom.byId('mode').__fire('change');
+    assert.equal(dom.byId('doctrine').disabled, true, 'hotseat disables the doctrine select');
+    dom.byId('mode').value = 'solo';
+    dom.byId('mode').__fire('change');
+    assert.equal(dom.byId('doctrine').disabled, false, 'solo re-enables it');
+  } finally {
+    dom.restore();
+  }
+});
 
 let passed = 0;for (const { name, fn } of tests) {
   try {
