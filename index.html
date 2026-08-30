@@ -245,7 +245,14 @@
           <option value="hotseat">Hotseat — two humans</option>
         </select>
       </div>
+      <div class="field">
+        <label for="doctrine">Rival doctrine</label>
+        <select id="doctrine" aria-describedby="doctrine-note"></select>
+      </div>
     </div>
+    <p id="doctrine-note" class="scoreline" style="display:block">Every doctrine is the same deterministic one-ply
+      heuristic — one simulation per legal placement, no search, no model of your reply. They differ only in what they
+      value. Changing the doctrine starts a new match; it does not apply in hotseat.</p>
     <div class="controls" style="margin-top:0.5rem">
       <button id="new-seeded" class="act primary" type="button">New game (this seed)</button>
       <button id="new-random" class="act" type="button">New random seed</button>
@@ -292,6 +299,10 @@
       <li>The rival is a plain heuristic, not a deep engine: it scores every legal placement one move ahead with a single
         simulation and takes the best. It does no search and never models your reply, so it can be baited — leave a
         loaded cell where its capture hands you a bigger avalanche in return.</li>
+      <li>Rival doctrine picks what that one-ply heuristic values: Warden balances crowns, captures and ground; Reaper
+        hunts captures and enemy ground and ignores grains lost over the edge; Surveyor spreads quietly, hoards grains
+        and creeps toward unheld crowns. All three are deterministic and none of them searches — the same position
+        always draws the same move. Choosing one starts a new match, and it is disabled in hotseat.</li>
       <li>Keys: arrows move, Home/End jump along a row, Enter or Space places, R reads, N new game, P pause, H help,
         Escape closes help.</li>
     </ol>
@@ -316,7 +327,7 @@ import {
   previewFootprint,
   scoreboard, statusText, describeCell, describePreview, boardText, cellLabel, coordsOf,
   normalizeSeed, randomSeed, formatShare, replayMoves, appendHistory, historyEntry,
-  boundedWaves, validateState, HISTORY_LIMIT,
+  boundedWaves, validateState, HISTORY_LIMIT, DOCTRINES, DEFAULT_DOCTRINE, doctrineOf,
 } from './game.mjs';
 
 const CROWN_SVG =
@@ -335,6 +346,8 @@ const readOutEl = el('read-out');
 const mirrorEl = el('mirror');
 const seedInput = el('seed');
 const modeSelect = el('mode');
+const doctrineSelect = el('doctrine');
+const doctrineNote = el('doctrine-note');
 const shareOut = el('share-out');
 const historyEl = el('history');
 const readBtn = el('read');
@@ -386,6 +399,25 @@ for (let y = 0; y < SIZE; y += 1) {
 }
 
 boardEl.addEventListener('keydown', onBoardKey);
+
+/* ---------- rival doctrine control (options come from the engine catalog) ---------- */
+for (const doctrine of DOCTRINES) {
+  const option = document.createElement('option');
+  option.value = doctrine.id;
+  option.textContent = doctrine.name;
+  doctrineSelect.append(option);
+}
+doctrineSelect.value = DEFAULT_DOCTRINE;
+
+function syncDoctrineControl() {
+  const solo = modeSelect.value === 'solo';
+  doctrineSelect.disabled = !solo; // hotseat has no rival to hold a doctrine
+  const doctrine = doctrineOf(doctrineSelect.value);
+  doctrineNote.textContent =
+    `${doctrine.name}: ${doctrine.blurb} Every doctrine is the same deterministic one-ply heuristic — one simulation `
+    + 'per legal placement, no search, no model of your reply. Changing it starts a new match.'
+    + (solo ? '' : ' Hotseat has no rival, so no doctrine is in play.');
+}
 
 function syncRovingTabindex() {
   for (let i = 0; i < CELL_COUNT; i += 1) cellEls[i].tabIndex = i === focusIndex ? 0 : -1;
@@ -550,7 +582,7 @@ function maybeScheduleAi() {
   if (paused || busy || game.mode !== 'solo' || game.status !== 'playing' || game.current !== 'rival') return;
   aiTimer = window.setTimeout(() => {
     if (paused || busy || game.status !== 'playing' || game.current !== 'rival') return;
-    const move = chooseMove(game, 'rival');
+    const move = chooseMove(game, 'rival', { doctrine: game.doctrine });
     if (move === null) return;
     commit(move);
   }, AI_DELAY_MS);
@@ -573,7 +605,7 @@ function finishMatch() {
   // Determinism check: the seed plus the move log must rebuild this exact board.
   let integrity = '';
   try {
-    const rebuilt = replayMoves(game.seed, game.moves, { mode: game.mode });
+    const rebuilt = replayMoves(game.seed, game.moves, { mode: game.mode, doctrine: game.doctrine });
     if (JSON.stringify(rebuilt.cells) !== JSON.stringify(game.cells)) integrity = ' (replay check failed)';
   } catch (error) {
     integrity = ' (replay check failed)';
@@ -591,10 +623,15 @@ function startGame(seedText, options = {}) {
   readMarks = [];
   const seed = normalizeSeed(seedText);
   seedInput.value = seed;
-  game = createGame(seed, { mode: modeSelect.value });
+  syncDoctrineControl();
+  game = createGame(seed, { mode: modeSelect.value, doctrine: doctrineSelect.value });
   focusIndex = game.bases.playerIndex;
   render();
-  announce(options.message ?? `New match on seed ${seed}. ${game.mode === 'solo' ? 'You open against the heuristic rival.' : 'Player opens; hotseat.'}`);
+  const doctrine = doctrineOf(game.doctrine);
+  const opponent = game.mode === 'solo'
+    ? `You open against the ${doctrine.name} doctrine — ${doctrine.blurb} It is deterministic and one-ply: no search.`
+    : 'Player opens; hotseat, so no rival doctrine is in play.';
+  announce(`${options.message ?? `New match on seed ${seed}.`} ${opponent}`);
   maybeScheduleAi();
 }
 
@@ -629,7 +666,8 @@ function renderHistory() {
   for (const entry of history) {
     const li = document.createElement('li');
     const who = entry.winner === 'player' ? 'Player' : entry.winner === 'rival' ? 'Rival' : 'Draw';
-    li.textContent = `${entry.seed} · ${entry.mode} · ${who} · ${entry.reason} · crowns ${entry.crowns?.player ?? 0}–${entry.crowns?.rival ?? 0} · ${entry.turns} turns`;
+    const doctrine = entry.mode === 'solo' && entry.doctrine ? ` (${entry.doctrine})` : '';
+    li.textContent = `${entry.seed} · ${entry.mode}${doctrine} · ${who} · ${entry.reason} · crowns ${entry.crowns?.player ?? 0}–${entry.crowns?.rival ?? 0} · ${entry.turns} turns`;
     historyEl.append(li);
   }
 }
@@ -734,6 +772,7 @@ el('clear-history').addEventListener('click', () => {
   announce('Local match history cleared.');
 });
 modeSelect.addEventListener('change', () => startGame(seedInput.value));
+doctrineSelect.addEventListener('change', () => startGame(seedInput.value));
 seedInput.addEventListener('change', () => { seedInput.value = normalizeSeed(seedInput.value); });
 
 renderHistory();

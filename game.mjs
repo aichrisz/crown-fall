@@ -400,13 +400,99 @@ export function spendRead(state, owner) {
 }
 
 /**
+ * Rival doctrines. Every doctrine is the *same* honest one-ply heuristic — a
+ * single simulation per legal placement, no search, no model of your reply —
+ * and differs only in what it values. `warden` holds the original weights, so
+ * the default rival is unchanged; the others reprioritise the same terms.
+ */
+export const DEFAULT_DOCTRINE = 'warden';
+
+export const DOCTRINES = Object.freeze([
+  Object.freeze({
+    id: 'warden',
+    name: 'Warden',
+    blurb: 'Balanced. Takes crowns, denies yours, and treats captures, ground and wasted grains as roughly equal concerns.',
+    weights: Object.freeze({
+      crownGain: 140,
+      crownDenial: 110,
+      capture: 9,
+      territoryGain: 4,
+      territoryLoss: 3,
+      dissipation: 2,
+      victory: 400,
+      loadedThreat: 6,
+      threatEnemy: 2,
+      threatNeutral: 1,
+      threatCrown: 4,
+      crownProximity: 1,
+    }),
+  }),
+  Object.freeze({
+    id: 'reaper',
+    name: 'Reaper',
+    blurb: 'Aggressive. Hunts captures and enemy ground, loads cells against your territory, and does not care what falls off the edge.',
+    weights: Object.freeze({
+      crownGain: 90,
+      crownDenial: 55,
+      capture: 26,
+      territoryGain: 2,
+      territoryLoss: 10,
+      dissipation: 0,
+      victory: 400,
+      loadedThreat: 11,
+      threatEnemy: 5,
+      threatNeutral: 0,
+      threatCrown: 2,
+      crownProximity: 0,
+    }),
+  }),
+  Object.freeze({
+    id: 'surveyor',
+    name: 'Surveyor',
+    blurb: 'Patient. Spreads over quiet ground, hoards grains rather than spilling them over the edge, and creeps toward unheld crowns.',
+    weights: Object.freeze({
+      crownGain: 170,
+      crownDenial: 130,
+      capture: 2,
+      territoryGain: 7,
+      territoryLoss: 1,
+      dissipation: 9,
+      victory: 400,
+      loadedThreat: 3,
+      threatEnemy: 1,
+      threatNeutral: 1,
+      threatCrown: 7,
+      crownProximity: 5,
+    }),
+  }),
+]);
+
+const DOCTRINE_BY_ID = new Map(DOCTRINES.map(doctrine => [doctrine.id, doctrine]));
+
+/**
+ * Normalize a doctrine id at every boundary: trimmed, lowercased, and anything
+ * unrecognised (including nothing at all) becomes warden. Idempotent.
+ */
+export function normalizeDoctrine(id) {
+  const text = typeof id === 'string' ? id.trim().toLowerCase() : '';
+  return DOCTRINE_BY_ID.has(text) ? text : DEFAULT_DOCTRINE;
+}
+
+/** Look up a doctrine, falling back to warden for anything unrecognised. */
+export function doctrineOf(id) {
+  return DOCTRINE_BY_ID.get(normalizeDoctrine(id));
+}
+
+/**
  * Honest one-ply heuristic — NOT a deep search. It scores every legal placement
  * with a single pure simulation (the same READ machinery a human can use, at no
  * charge) and takes the best, breaking ties by proximity to an unheld crown and
  * then by lowest cell index. It never looks at the opponent's reply, so it can
  * be baited into leaving a loaded cell next to enemy territory.
  */
-export function scoreMove(state, owner, index) {
+export function scoreMove(state, owner, index, options = {}) {
+  // Doctrine resolution order: explicit option, then the state, then the default.
+  const weights = doctrineOf(options.doctrine ?? state.doctrine).weights;
   const foe = opponentOf(owner);
   const before = scoreboard(state);
   const preview = previewMove(state, owner, index);
@@ -417,13 +503,13 @@ export function scoreMove(state, owner, index) {
   const territoryGain = after[owner].territory - before[owner].territory;
   const territoryLoss = before[foe].territory - after[foe].territory;
   let score = 0;
-  score += 140 * crownGain;
-  score += 110 * crownDenial;
-  score += 9 * preview.captured.length;
-  score += 4 * territoryGain;
-  score += 3 * territoryLoss;
-  score -= 2 * preview.dissipated; // grains thrown off the board are wasted
-  if (after[owner].crowns >= CROWNS_TO_WIN) score += 400;
+  score += weights.crownGain * crownGain;
+  score += weights.crownDenial * crownDenial;
+  score += weights.capture * preview.captured.length;
+  score += weights.territoryGain * territoryGain;
+  score += weights.territoryLoss * territoryLoss;
+  score -= weights.dissipation * preview.dissipated; // grains thrown off the board are wasted
+  if (after[owner].crowns >= CROWNS_TO_WIN) score += weights.victory;
   // Two-step intent: a cell left on three grains topples next turn, so value the
   // enemy cells and unheld crowns it would sweep into. This is the whole of the
   // heuristic's foresight — it never models the opponent's reply.
@@ -432,11 +518,11 @@ export function scoreMove(state, owner, index) {
     let threatened = 0;
     for (const n of neighborsOf(index)) {
       const neighbor = preview.cells[n];
-      if (neighbor.owner === foe) threatened += 2;
-      else if (neighbor.owner === 'neutral') threatened += 1;
-      if (neighbor.crown && neighbor.owner !== owner) threatened += 4;
+      if (neighbor.owner === foe) threatened += weights.threatEnemy;
+      else if (neighbor.owner === 'neutral') threatened += weights.threatNeutral;
+      if (neighbor.crown && neighbor.owner !== owner) threatened += weights.threatCrown;
     }
-    score += 6 * threatened;
+    score += weights.loadedThreat * threatened;
   }
   // Mild pull toward crowns that nobody holds yet.
   const target = coordsOf(index);
@@ -445,16 +531,16 @@ export function scoreMove(state, owner, index) {
     if (preview.cells[crown].owner === owner) continue;
     nearest = Math.min(nearest, chebyshev(target, coordsOf(crown)));
   }
-  score -= nearest;
+  score -= weights.crownProximity * nearest;
   return { index, score, preview };
 }
 
-export function chooseMove(state, owner) {
+export function chooseMove(state, owner, options = {}) {
   const moves = legalMoves(state, owner);
   if (moves.length === 0) return null;
   let best = null;
   for (const index of moves) {
-    const scored = scoreMove(state, owner, index);
+    const scored = scoreMove(state, owner, index, options);
     if (!scored) continue;
     if (best === null || scored.score > best.score) best = scored;
   }
@@ -541,6 +627,9 @@ export function validateState(state) {
     problems.push(`turn count ${state.turnCount} is outside the bounded cap of ${TURN_CAP}`);
   } else if (Array.isArray(state.moves) && state.moves.length !== state.turnCount) {
     problems.push('move log length disagrees with the turn count');
+  }
+  if (state.doctrine != null && normalizeDoctrine(state.doctrine) !== state.doctrine) {
+    problems.push(`unknown rival doctrine "${state.doctrine}"`);
   }
   return problems;
 }
@@ -654,13 +743,14 @@ export function describePreview(state, preview) {
 
 /** Local match history: bounded, newest first, and deliberately anonymous. */
 export const HISTORY_LIMIT = 20;
-const HISTORY_FIELDS = ['seed', 'mode', 'winner', 'reason', 'turns', 'crowns', 'share'];
+const HISTORY_FIELDS = ['seed', 'mode', 'doctrine', 'winner', 'reason', 'turns', 'crowns', 'share'];
 
 export function historyEntry(state) {
   const tally = crownTally(state.cells, state.crowns ?? []);
   return {
     seed: state.seed,
     mode: state.mode,
+    doctrine: normalizeDoctrine(state.doctrine),
     winner: state.winner,
     reason: state.reason,
     turns: state.turnCount,
@@ -684,17 +774,19 @@ export function appendHistory(list, entry) {
  * over: by the rules' turn cap and by an independent loop guard.
  */
 export function playSelfMatch(seed, options = {}) {
-  let state = createGame(seed, { mode: options.mode ?? 'solo' });
+  const doctrine = normalizeDoctrine(options.doctrine);
+  let state = createGame(seed, { mode: options.mode ?? 'solo', doctrine });
   let guard = 0;
   while (state.status === 'playing') {
     guard += 1;
     if (guard > TURN_CAP + 8) throw new Error(`self-play failed to terminate for seed ${state.seed}`);
-    const choice = chooseMove(state, state.current);
+    const choice = chooseMove(state, state.current, { doctrine });
     if (choice === null) throw new Error(`no legal move for ${state.current} on seed ${state.seed}`);
     state = applyMove(state, choice);
   }
   return {
     seed: state.seed,
+    doctrine,
     state,
     turns: state.turnCount,
     winner: state.winner,
@@ -793,6 +885,7 @@ export function createGame(seed, options = {}) {
   return {
     seed: normalizedSeed,
     mode: options.mode === 'solo' ? 'solo' : 'hotseat',
+    doctrine: normalizeDoctrine(options.doctrine),
     size: SIZE,
     cells,
     bases,

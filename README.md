@@ -67,13 +67,29 @@ scores the result: crowns gained, crowns denied, enemy cells captured, territory
 bonus for leaving a cell on 3 grains next to enemy ground or an unheld crown (a cell that will topple next turn). Best
 score wins; ties break toward crowns and then the lowest cell index.
 
-Its limits, honestly:
+**Doctrines.** The "Rival doctrine" select chooses *what that same one-ply heuristic values* — nothing else. All three
+run one simulation per legal placement, do no search, and never model your reply:
+
+| Doctrine | Priorities |
+| --- | --- |
+| **Warden** (default) | Balanced. Crowns, captures, ground and wasted grains all matter. Identical to the pre-doctrine rival, weight for weight. |
+| **Reaper** | Aggressive. Captures and enemy ground dominate, loaded cells are aimed at your territory, and grains lost over the edge cost it nothing. |
+| **Surveyor** | Patient. Spreads over quiet ground, hoards grains rather than spilling them off the board, and creeps toward unheld crowns. |
+
+The catalog is frozen and exported by the engine, and the select is built from it, so the page can never offer a
+doctrine the rules engine does not have. Unknown or missing ids normalise to `warden` at every boundary — `createGame`,
+`scoreMove`, `chooseMove`, `playSelfMatch`, validation, replay options and the history record. Changing the doctrine
+starts a new match, and the control is disabled in hotseat because there is no rival to hold one. Your choice is not
+persisted anywhere, and result strings are untouched: `CF1` still has exactly six fields.
+
+Their limits, honestly:
 
 - **No search.** It never models your reply. A capture it takes gladly may hand you a bigger avalanche in return.
 - **No defence except by accident.** It does not notice that a cell of yours is one grain from sweeping through it.
 - **Two moves of intent at most**, via the "loaded cell" bonus. There is no plan beyond that.
 - **Fully deterministic.** The same position always produces the same move, so a line that beats it keeps beating it.
-- **Moving first is worth something.** In the 120-seed heuristic-vs-heuristic sweep the first mover won 82 matches and
+- **Moving first is worth something.** In the 120-seed heuristic-vs-heuristic sweep — **default doctrine on both sides**
+  — the first mover won 82 matches and
   the second 38. Every board is provably symmetric under 180° rotation, so that gap is pure tempo: the tempo advantage
   is real and is not compensated for.
 
@@ -125,7 +141,8 @@ is a complete record of a match: `replayMoves(seed, moves)` re-applies every pla
 reproduces the final board exactly. The page runs that check when a match ends and says so if it ever disagrees.
 
 **History.** The last 20 results are kept in this browser's `localStorage` under `crownfall.history.v1`. Each entry
-holds only seed, mode, winner, ranking reason, turn count, crown tally and result string — the writer whitelists those
+holds only seed, mode, rival doctrine id, winner, ranking reason, turn count, crown tally and result string — the
+writer whitelists those
 fields, so nothing else can be stored even by accident. "Clear history" removes them.
 
 ## Offline and privacy properties
@@ -148,8 +165,10 @@ dissipation, mover capture through a whole cascade, stabilisation termination / 
 the safety bound, seeded crown layout and grain field with their fairness mirror, exact READ preview and its
 non-mutation, READ charges, turn alternation and immutability, the crown win with its opening gate, passing, the turn
 cap and the ranking ladder, seed normalisation, the share string round-trip, replay, the bounded animation queue, the
-bounded anonymous history, the text mirror, the heuristic's determinism and legality, and a **120-seed self-play
-sweep** in which every match must terminate inside the cap and end on a board with no unstable, negative or
+bounded anonymous history, the text mirror, the heuristic's determinism and legality, the frozen doctrine catalog with
+six pinned default self-play results, doctrine normalisation and threading, two pinned positions where the doctrines
+provably diverge, a per-doctrine **15-match audit** (5 seeds × 3 doctrines: terminal, valid, replayable, and actually
+avalanching), and a **120-seed default self-play sweep** in which every match must terminate inside the cap and end on a board with no unstable, negative or
 invalid-owner cells. Every match in that sweep is currently decided on crowns, the longest running 122 of the 160
 permitted turns. The suite also extracts the page's module and executes it against a small DOM stub, so the
 interface itself — first render, a placement, the rival's reply, READ, export, replay — is exercised rather than
