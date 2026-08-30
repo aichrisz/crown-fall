@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CROWN//FALL — offline avalanche strategy</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="CROWN//FALL: a small offline strategy game of grains, avalanches and crowns. No network, no accounts, no tracking.">
+<style>
+  :root {
+    --obsidian: #07070c;
+    --obsidian-2: #0d0d16;
+    --obsidian-3: #14141f;
+    --ink: #1c1c2b;
+    --ivory: #f2efe4;
+    --ivory-dim: #a9a596;
+    --violet: #8f6bff;
+    --violet-deep: #3a2a7a;
+    --amber: #f2a93b;
+    --amber-deep: #6d4410;
+    --focus: #7fe3ff;
+    --cell: clamp(15px, calc((min(100vw - 1.5rem, 27rem)) / 15 - 2px), 28px);
+    --gap: 2px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    padding: 0.75rem 0.75rem 3rem;
+    background:
+      radial-gradient(120% 80% at 50% -10%, #191330 0%, rgba(10,10,18,0) 60%),
+      radial-gradient(90% 60% at 50% 110%, #2a1a08 0%, rgba(10,10,18,0) 55%),
+      var(--obsidian);
+    color: var(--ivory);
+    font: 400 clamp(0.9rem, 0.85rem + 0.3vw, 1rem)/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+  }
+  main { max-width: 30rem; margin: 0 auto; }
+  h1 {
+    margin: 0 0 0.15rem;
+    font-size: clamp(1.4rem, 1.1rem + 2vw, 2rem);
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    line-height: 1.1;
+  }
+  h1 .a { color: var(--ivory); text-shadow: 0 0 14px rgba(242,239,228,0.25); }
+  h1 .slash { color: var(--amber); text-shadow: 0 0 16px rgba(242,169,59,0.55); }
+  h1 .b { color: var(--violet); text-shadow: 0 0 18px rgba(143,107,255,0.55); }
+  h2 { font-size: 1rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ivory-dim); margin: 1.25rem 0 0.5rem; }
+  p { margin: 0.4rem 0; }
+  .tagline { color: var(--ivory-dim); font-size: 0.82rem; letter-spacing: 0.05em; margin-bottom: 0.6rem; }
+
+  .panel {
+    background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.012));
+    border: 1px solid rgba(242,239,228,0.12);
+    border-radius: 0.6rem;
+    padding: 0.6rem 0.7rem;
+    margin: 0.6rem 0;
+  }
+  .status { font-variant-numeric: tabular-nums; min-height: 3em; }
+  .status strong { color: var(--ivory); }
+  .scoreline { display: flex; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--ivory-dim); margin-top: 0.35rem; }
+  .scoreline span { border: 1px solid rgba(242,239,228,0.14); border-radius: 999px; padding: 0.05rem 0.5rem; }
+  .side-p { color: var(--violet); border-color: rgba(143,107,255,0.5) !important; }
+  .side-r { color: var(--amber); border-color: rgba(242,169,59,0.5) !important; }
+
+  /* ---- board ---- */
+  .board-wrap { display: flex; justify-content: center; margin: 0.5rem 0; }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(15, var(--cell));
+    gap: var(--gap);
+    padding: var(--gap);
+    background: linear-gradient(180deg, #0b0b14, #0e0e1a);
+    border: 1px solid rgba(242,239,228,0.16);
+    border-radius: 0.4rem;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 18px 40px -20px rgba(143,107,255,0.35), inset 0 0 60px rgba(0,0,0,0.7);
+  }
+  .row { display: contents; }
+  .cell {
+    all: unset;
+    position: relative;
+    width: var(--cell);
+    height: var(--cell);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    background: var(--obsidian-2);
+    border: 1px solid rgba(242,239,228,0.08);
+    border-radius: 3px;
+    color: var(--ivory);
+    overflow: hidden;
+    transition: background 140ms linear, box-shadow 140ms linear, transform 120ms ease-out;
+  }
+  .cell:hover { border-color: rgba(242,239,228,0.3); }
+  .cell:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; z-index: 3; }
+  /* Ownership is carried by tint AND hatch pattern AND glyph AND text label. */
+  .cell[data-owner="player"] {
+    background:
+      repeating-linear-gradient(45deg, rgba(143,107,255,0.34) 0 2px, rgba(143,107,255,0.12) 2px 4px),
+      var(--violet-deep);
+    border-color: rgba(143,107,255,0.65);
+  }
+  .cell[data-owner="rival"] {
+    background:
+      repeating-linear-gradient(0deg, rgba(242,169,59,0.32) 0 2px, rgba(242,169,59,0.1) 2px 4px),
+      var(--amber-deep);
+    border-color: rgba(242,169,59,0.65);
+  }
+  .cell[data-base="1"] { border-width: 2px; border-style: double; }
+  .cell[data-legal="1"]::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border: 1px dashed rgba(242,239,228,0.4);
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  .cell[data-loaded="1"] { box-shadow: inset 0 0 8px rgba(255,255,255,0.28); }
+  .glyph { position: absolute; top: 0; left: 1px; font-size: calc(var(--cell) * 0.42); line-height: 1; opacity: 0.9; }
+  .pips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; place-content: center; width: 70%; height: 70%; }
+  .pip { width: 100%; aspect-ratio: 1; background: var(--ivory); border-radius: 1px; }
+  .cell[data-owner="player"] .pip { transform: rotate(45deg) scale(0.8); background: #e8ddff; }
+  .cell[data-owner="rival"] .pip { border-radius: 50%; background: #ffe6bd; }
+  .crown { position: absolute; inset: 8%; opacity: 0.5; pointer-events: none; }
+  .cell[data-crown="1"] { border-color: rgba(242,239,228,0.5); }
+  .cell[data-crown="1"] .crown { opacity: 0.85; filter: drop-shadow(0 0 4px rgba(242,239,228,0.5)); }
+  .cell[data-last="1"] { box-shadow: 0 0 0 2px var(--focus), inset 0 0 10px rgba(127,227,255,0.35); }
+  .cell[data-read="1"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(127,227,255,0.55), rgba(127,227,255,0) 70%);
+    pointer-events: none;
+  }
+  .cell.wave {
+    transform: scale(1.14);
+    z-index: 2;
+    box-shadow: 0 0 10px 3px rgba(242,239,228,0.75), 0 0 22px 8px rgba(143,107,255,0.5);
+    background-color: #fff8e6;
+  }
+  .cell.trail { box-shadow: 0 0 8px 2px rgba(242,169,59,0.55); }
+
+  /* ---- controls ---- */
+  .controls { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  button.act, select, input[type="text"] {
+    font: inherit;
+    color: var(--ivory);
+    background: linear-gradient(180deg, #1b1b2b, #12121d);
+    border: 1px solid rgba(242,239,228,0.24);
+    border-radius: 0.45rem;
+    padding: 0.45rem 0.7rem;
+    min-height: 2.6rem;
+    cursor: pointer;
+  }
+  button.act:hover:not(:disabled) { border-color: var(--violet); box-shadow: 0 0 12px -2px rgba(143,107,255,0.6); }
+  button.act:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.act:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .primary { border-color: var(--amber); }
+  label { font-size: 0.8rem; color: var(--ivory-dim); display: block; }
+  .field { display: flex; flex-direction: column; gap: 0.15rem; flex: 1 1 8rem; }
+  input[type="text"] { width: 100%; }
+  pre {
+    overflow-x: auto;
+    font: 400 0.7rem/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: #05050a;
+    border: 1px solid rgba(242,239,228,0.12);
+    border-radius: 0.4rem;
+    padding: 0.5rem;
+    color: var(--ivory-dim);
+  }
+  ol { padding-left: 1.2rem; }
+  li { margin: 0.15rem 0; font-size: 0.85rem; }
+  details summary { cursor: pointer; color: var(--ivory-dim); }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  .legend { font-size: 0.78rem; color: var(--ivory-dim); display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .swatch { display: inline-grid; place-items: center; width: 1.2rem; height: 1.2rem; border-radius: 3px; vertical-align: -0.3rem; margin-right: 0.2rem; }
+  .swatch.p { background: repeating-linear-gradient(45deg, rgba(143,107,255,0.34) 0 2px, rgba(143,107,255,0.12) 2px 4px), var(--violet-deep); border: 1px solid rgba(143,107,255,0.65); }
+  .swatch.r { background: repeating-linear-gradient(0deg, rgba(242,169,59,0.32) 0 2px, rgba(242,169,59,0.1) 2px 4px), var(--amber-deep); border: 1px solid rgba(242,169,59,0.65); }
+  .swatch.n { background: var(--obsidian-2); border: 1px solid rgba(242,239,228,0.2); }
+  footer { color: var(--ivory-dim); font-size: 0.75rem; margin-top: 1.5rem; }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+    .cell.wave { transform: none; }
+  }
+  @media (prefers-contrast: more) {
+    .cell { border-color: rgba(242,239,228,0.45); }
+  }
+</style>
+</head>
+<body>
+<a class="visually-hidden" href="#board">Skip to board</a>
+<noscript>
+  <p class="panel">CROWN//FALL is a self-contained JavaScript game — the board, the rules and the rival all run locally in
+    this page. Nothing is sent anywhere, but JavaScript has to be enabled for the match to run.</p>
+</noscript>
+<main>
+  <header>
+    <h1><span class="a">CROWN</span><span class="slash">//</span><span class="b">FALL</span></h1>
+    <p class="tagline">Grains stack. Cells break. Territory changes hands. Hold three crowns.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="status-heading">
+    <h2 id="status-heading" class="visually-hidden">Match status</h2>
+    <div id="status" class="status" role="status" aria-live="polite">Loading…</div>
+    <div id="scoreline" class="scoreline"></div>
+  </section>
+
+  <div class="board-wrap">
+    <div id="board" class="board" role="grid" aria-labelledby="board-label" aria-describedby="board-help"></div>
+  </div>
+  <p id="board-label" class="visually-hidden">CROWN//FALL board, 15 columns A to O by 15 rows 1 to 15</p>
+  <p id="board-help" class="visually-hidden">
+    Move with the arrow keys. Press Enter or Space to place a grain. Press R to spend a READ charge and preview the
+    avalanche for the focused cell. Each cell states its owner, grain count and whether it is playable.
+  </p>
+
+  <section class="panel" aria-labelledby="actions-heading">
+    <h2 id="actions-heading">Actions</h2>
+    <div class="controls">
+      <button id="read" class="act primary" type="button">READ focused cell (<span id="read-count">3</span>)</button>
+      <button id="pause" class="act" type="button" aria-pressed="false">Pause</button>
+      <button id="help-toggle" class="act" type="button" aria-expanded="false" aria-controls="help">Help</button>
+    </div>
+    <p id="read-out" class="scoreline" aria-live="polite" style="display:block"></p>
+  </section>
+
+  <section class="panel" aria-labelledby="match-heading">
+    <h2 id="match-heading">Match</h2>
+    <div class="controls">
+      <div class="field">
+        <label for="seed">Seed</label>
+        <input id="seed" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="24" value="CROWN-FALL-001">
+      </div>
+      <div class="field">
+        <label for="mode">Opponent</label>
+        <select id="mode">
+          <option value="solo">Solo — heuristic rival</option>
+          <option value="hotseat">Hotseat — two humans</option>
+        </select>
+      </div>
+    </div>
+    <div class="controls" style="margin-top:0.5rem">
+      <button id="new-seeded" class="act primary" type="button">New game (this seed)</button>
+      <button id="new-random" class="act" type="button">New random seed</button>
+      <button id="replay" class="act" type="button">Replay this seed</button>
+    </div>
+    <div class="controls" style="margin-top:0.5rem">
+      <button id="export" class="act" type="button">Export board PNG</button>
+      <button id="share" class="act" type="button">Copy result string</button>
+    </div>
+    <p><label for="share-out">Result string</label>
+      <input id="share-out" type="text" readonly value=""></p>
+  </section>
+
+  <section class="panel" aria-labelledby="mirror-heading">
+    <h2 id="mirror-heading">Board as text</h2>
+    <p class="legend">
+      <span><span class="swatch p" aria-hidden="true"></span>P — you / player (diamond pips, 45° hatch)</span>
+      <span><span class="swatch r" aria-hidden="true"></span>R — rival (round pips, flat hatch)</span>
+      <span><span class="swatch n" aria-hidden="true"></span>. — neutral</span>
+      <span>♛ outline — crown site</span>
+    </p>
+    <details>
+      <summary>Show the whole board as plain text</summary>
+      <pre id="mirror" tabindex="0" aria-label="Plain text mirror of the board"></pre>
+    </details>
+  </section>
+
+  <section class="panel" id="help" hidden aria-labelledby="help-heading">
+    <h2 id="help-heading">Rules and controls</h2>
+    <ol>
+      <li>The board is 15×15. Every cell holds 0–3 grains and belongs to you, the rival, or nobody.</li>
+      <li>On your turn place one grain on a cell you own, or on a neutral cell orthogonally touching your territory.
+        You can never place directly on enemy ground.</li>
+      <li>Placing on neutral ground claims it. A cell holding 4 grains topples: it loses 4 and sends one grain to each
+        orthogonal neighbour. Grains pushed off the edge are gone.</li>
+      <li>Every in-bounds cell an avalanche touches becomes yours — that is how territory and crowns change hands. The
+        entire cascade belongs to the side that triggered it.</li>
+      <li>Five crown sites are seeded per board, mirrored through 180° so both sides face the same layout. Hold three
+        crowns at the end of your turn to win — but no crown win registers until both sides have taken three turns.</li>
+      <li>If neither side can move, or at the 160-turn cap, the match is ranked on crowns, then territory, then grains,
+        then declared a draw.</li>
+      <li>READ: three charges per side per match. It previews the exact avalanche and capture footprint of the focused
+        cell without changing anything. The heuristic rival simulates freely — it costs it nothing.</li>
+      <li>The rival is a plain heuristic, not a deep engine: it scores every legal placement one move ahead with a single
+        simulation and takes the best. It does no search and never models your reply, so it can be baited — leave a
+        loaded cell where its capture hands you a bigger avalanche in return.</li>
+      <li>Keys: arrows move, Home/End jump along a row, Enter or Space places, R reads, N new game, P pause, H help,
+        Escape closes help.</li>
+    </ol>
+  </section>
+
+  <section class="panel" aria-labelledby="history-heading">
+    <h2 id="history-heading">Recent results (last 20, stored on this device only)</h2>
+    <ol id="history"></ol>
+    <button id="clear-history" class="act" type="button">Clear history</button>
+  </section>
+
+  <footer>
+    <p>Fully offline: no network requests, no service worker, no analytics, no accounts, no fonts or images fetched from
+      anywhere. Only the last 20 anonymous match results are kept in this browser's local storage.</p>
+  </footer>
+</main>
+
+<script type="module">
+import {
+  SIZE, CELL_COUNT, TOPPLE_THRESHOLD, TURN_CAP, CROWNS_TO_WIN,
+  createGame, applyMove, previewMove, chooseMove, isLegalMove, legalMoves, spendRead,
+  previewFootprint,
+  scoreboard, statusText, describeCell, describePreview, boardText, cellLabel, coordsOf,
+  normalizeSeed, randomSeed, formatShare, replayMoves, appendHistory, historyEntry,
+  boundedWaves, validateState, HISTORY_LIMIT,
+} from './game.mjs';
+
+const CROWN_SVG =
+  '<svg class="crown" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+  '<path d="M2 13V5l3 3 3-6 3 6 3-3v8z" fill="none" stroke="#f2efe4" stroke-width="1.2" stroke-linejoin="round"/>' +
+  '</svg>';
+const HISTORY_KEY = 'crownfall.history.v1';
+const WAVE_MS = 70;
+const AI_DELAY_MS = 320;
+
+const el = id => document.getElementById(id);
+const boardEl = el('board');
+const statusEl = el('status');
+const scoreEl = el('scoreline');
+const readOutEl = el('read-out');
+const mirrorEl = el('mirror');
+const seedInput = el('seed');
+const modeSelect = el('mode');
+const shareOut = el('share-out');
+const historyEl = el('history');
+const readBtn = el('read');
+const readCountEl = el('read-count');
+const pauseBtn = el('pause');
+const helpBtn = el('help-toggle');
+const helpEl = el('help');
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const cellEls = [];
+const glyphEls = [];
+const pipEls = [];
+let game = null;
+let focusIndex = 0;
+let busy = false;
+let paused = false;
+let readMarks = [];
+let aiTimer = 0;
+let history = loadHistory();
+
+/* ---------- board construction (built once, updated in place) ---------- */
+for (let y = 0; y < SIZE; y += 1) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.setAttribute('role', 'row');
+  for (let x = 0; x < SIZE; x += 1) {
+    const index = y * SIZE + x;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cell';
+    button.setAttribute('role', 'gridcell');
+    button.dataset.index = String(index);
+    button.tabIndex = -1;
+    const glyph = document.createElement('span');
+    glyph.className = 'glyph';
+    glyph.setAttribute('aria-hidden', 'true');
+    const pips = document.createElement('span');
+    pips.className = 'pips';
+    pips.setAttribute('aria-hidden', 'true');
+    button.append(glyph, pips);
+    button.addEventListener('click', () => { focusIndex = index; onPlace(index); });
+    button.addEventListener('focus', () => { focusIndex = index; syncRovingTabindex(); });
+    row.append(button);
+    cellEls.push(button);
+    glyphEls.push(glyph);
+    pipEls.push(pips);
+  }
+  boardEl.append(row);
+}
+
+boardEl.addEventListener('keydown', onBoardKey);
+
+function syncRovingTabindex() {
+  for (let i = 0; i < CELL_COUNT; i += 1) cellEls[i].tabIndex = i === focusIndex ? 0 : -1;
+}
+
+function onBoardKey(event) {
+  const { x, y } = coordsOf(focusIndex);
+  let next = null;
+  switch (event.key) {
+    case 'ArrowLeft': next = [Math.max(0, x - 1), y]; break;
+    case 'ArrowRight': next = [Math.min(SIZE - 1, x + 1), y]; break;
+    case 'ArrowUp': next = [x, Math.max(0, y - 1)]; break;
+    case 'ArrowDown': next = [x, Math.min(SIZE - 1, y + 1)]; break;
+    case 'Home': next = [0, y]; break;
+    case 'End': next = [SIZE - 1, y]; break;
+    case 'PageUp': next = [x, 0]; break;
+    case 'PageDown': next = [x, SIZE - 1]; break;
+    case 'r': case 'R': event.preventDefault(); doRead(); return;
+    default: return;
+  }
+  event.preventDefault();
+  focusIndex = next[1] * SIZE + next[0];
+  syncRovingTabindex();
+  cellEls[focusIndex].focus();
+}
+
+document.addEventListener('keydown', event => {
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+  if (event.key === 'Escape' && !helpEl.hidden) { toggleHelp(false); helpBtn.focus(); return; }
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.key === 'n' || event.key === 'N') { event.preventDefault(); startGame(seedInput.value); }
+  else if (event.key === 'p' || event.key === 'P') { event.preventDefault(); togglePause(); }
+  else if (event.key === 'h' || event.key === 'H') { event.preventDefault(); toggleHelp(helpEl.hidden); }
+});
+
+/* ---------- rendering ---------- */
+function humanSide() {
+  return game.mode === 'hotseat' ? game.current : 'player';
+}
+
+function render() {
+  const viewer = humanSide();
+  const legal = new Set(game.status === 'playing' ? legalMoves(game, game.current) : []);
+  const marks = new Set(readMarks);
+  for (let index = 0; index < CELL_COUNT; index += 1) {
+    const cell = game.cells[index];
+    const node = cellEls[index];
+    node.dataset.owner = cell.owner;
+    node.dataset.crown = cell.crown ? '1' : '0';
+    node.dataset.base = cell.base ? '1' : '0';
+    node.dataset.legal = legal.has(index) ? '1' : '0';
+    node.dataset.loaded = cell.grains === TOPPLE_THRESHOLD - 1 ? '1' : '0';
+    node.dataset.last = game.lastMove && game.lastMove.index === index ? '1' : '0';
+    node.dataset.read = marks.has(index) ? '1' : '0';
+    const glyph = glyphEls[index];
+    glyph.textContent = cell.owner === 'player' ? '▲' : cell.owner === 'rival' ? '▼' : '';
+    const pips = pipEls[index];
+    if (Number(pips.dataset.count ?? -1) !== cell.grains) {
+      pips.dataset.count = String(cell.grains);
+      pips.textContent = '';
+      for (let i = 0; i < cell.grains; i += 1) {
+        const pip = document.createElement('span');
+        pip.className = 'pip';
+        pips.append(pip);
+      }
+    }
+    const crownNode = node.querySelector('.crown');
+    if (cell.crown && !crownNode) node.insertAdjacentHTML('afterbegin', CROWN_SVG);
+    else if (!cell.crown && crownNode) crownNode.remove();
+    node.setAttribute('aria-label', describeCell(game, index, game.current));
+    node.disabled = game.status !== 'playing';
+  }
+  syncRovingTabindex();
+  // In hotseat both sides are human, so the status line must name whose turn it is.
+  const hotseatPrefix = game.mode === 'hotseat' && game.status === 'playing'
+    ? `${game.current === 'player' ? 'Player ▲ (violet)' : 'Rival ▼ (amber)'} to move. `
+    : '';
+  statusEl.textContent = hotseatPrefix + statusText(game, viewer);
+  const score = scoreboard(game);
+  scoreEl.textContent = '';
+  addChip(`Crowns ${score.player.crowns}/${CROWNS_TO_WIN}`, 'side-p');
+  addChip(`Territory ${score.player.territory}`, 'side-p');
+  addChip(`Grains ${score.player.grains}`, 'side-p');
+  addChip(`Crowns ${score.rival.crowns}/${CROWNS_TO_WIN}`, 'side-r');
+  addChip(`Territory ${score.rival.territory}`, 'side-r');
+  addChip(`Grains ${score.rival.grains}`, 'side-r');
+  addChip(`Turn ${game.turnCount}/${TURN_CAP}`, '');
+  addChip(`Seed ${game.seed}`, '');
+  readCountEl.textContent = String(game.reads[viewer]);
+  readBtn.disabled = game.status !== 'playing' || game.reads[viewer] <= 0 || busy;
+  mirrorEl.textContent = boardText(game, game.current);
+  shareOut.value = formatShare(game);
+}
+
+function addChip(text, className) {
+  const span = document.createElement('span');
+  if (className) span.className = className;
+  span.textContent = text;
+  scoreEl.append(span);
+}
+
+function announce(message) {
+  readOutEl.textContent = message;
+}
+
+/* ---------- moves ---------- */
+async function onPlace(index) {
+  if (busy || game.status !== 'playing') return;
+  if (paused) { announce('Paused. Resume before placing a grain.'); return; }
+  if (game.mode === 'solo' && game.current !== 'player') { announce('The rival is thinking.'); return; }
+  if (!isLegalMove(game, game.current, index)) {
+    const why = previewMove(game, game.current, index);
+    announce(`${cellLabel(index)} is not playable — ${why.reason}`);
+    return;
+  }
+  readMarks = [];
+  await commit(index);
+}
+
+async function commit(index) {
+  busy = true;
+  const mover = game.current;
+  const next = applyMove(game, index);
+  const problems = validateState(next);
+  if (problems.length) { // safety net: never show a corrupt board
+    announce(`Move refused — internal check failed: ${problems[0]}`);
+    busy = false;
+    return;
+  }
+  game = next;
+  render();
+  await animate(game.lastMove);
+  if (game.status !== 'playing') finishMatch();
+  else {
+    const passed = game.passedBy ? ` ${game.passedBy === 'player' ? 'You have' : 'The rival has'} no legal move and passed.` : '';
+    announce(`${mover === 'player' ? 'You' : 'The rival'} played ${cellLabel(index)}.${passed}`);
+  }
+  busy = false;
+  render();
+  maybeScheduleAi();
+}
+
+async function animate(lastMove) {
+  if (!lastMove || reducedMotion.matches || paused) return;
+  const waves = boundedWaves(lastMove.waves);
+  for (const wave of waves) {
+    for (const index of wave) cellEls[index].classList.add('wave');
+    await sleep(WAVE_MS);
+    for (const index of wave) {
+      cellEls[index].classList.remove('wave');
+      cellEls[index].classList.add('trail');
+    }
+  }
+  await sleep(WAVE_MS * 2);
+  for (const index of new Set(waves.flat())) cellEls[index].classList.remove('trail');
+}
+
+const sleep = ms => new Promise(resolve => { window.setTimeout(resolve, ms); });
+
+function maybeScheduleAi() {
+  window.clearTimeout(aiTimer);
+  if (paused || busy || game.mode !== 'solo' || game.status !== 'playing' || game.current !== 'rival') return;
+  aiTimer = window.setTimeout(() => {
+    if (paused || busy || game.status !== 'playing' || game.current !== 'rival') return;
+    const move = chooseMove(game, 'rival');
+    if (move === null) return;
+    commit(move);
+  }, AI_DELAY_MS);
+}
+
+function doRead() {
+  if (busy || game.status !== 'playing') return;
+  const viewer = humanSide();
+  if (game.mode === 'solo' && game.current !== 'player') { announce('READ is for your own turn.'); return; }
+  if (game.reads[viewer] <= 0) { announce('No READ charges left this match.'); return; }
+  const preview = previewMove(game, game.current, focusIndex);
+  if (!preview.legal) { announce(`${cellLabel(focusIndex)} is not playable — ${preview.reason}`); return; }
+  game = spendRead(game, viewer);
+  readMarks = previewFootprint(preview);
+  announce(describePreview(game, preview));
+  render();
+}
+
+function finishMatch() {
+  // Determinism check: the seed plus the move log must rebuild this exact board.
+  let integrity = '';
+  try {
+    const rebuilt = replayMoves(game.seed, game.moves, { mode: game.mode });
+    if (JSON.stringify(rebuilt.cells) !== JSON.stringify(game.cells)) integrity = ' (replay check failed)';
+  } catch (error) {
+    integrity = ' (replay check failed)';
+  }
+  history = appendHistory(history, historyEntry(game));
+  saveHistory();
+  renderHistory();
+  announce(`${statusText(game, humanSide())} Result string: ${formatShare(game)}${integrity}`);
+}
+
+/* ---------- match lifecycle ---------- */
+function startGame(seedText, options = {}) {
+  window.clearTimeout(aiTimer);
+  busy = false;
+  readMarks = [];
+  const seed = normalizeSeed(seedText);
+  seedInput.value = seed;
+  game = createGame(seed, { mode: modeSelect.value });
+  focusIndex = game.bases.playerIndex;
+  render();
+  announce(options.message ?? `New match on seed ${seed}. ${game.mode === 'solo' ? 'You open against the heuristic rival.' : 'Player opens; hotseat.'}`);
+  maybeScheduleAi();
+}
+
+/* ---------- history ---------- */
+function loadHistory() {
+  try {
+    const raw = window.localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, HISTORY_LIMIT).reduce((list, entry) => appendHistory(list, entry), []).reverse();
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveHistory() {
+  try {
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch (error) {
+    /* storage may be unavailable or full — the game plays on regardless */
+  }
+}
+
+function renderHistory() {
+  historyEl.textContent = '';
+  if (history.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'No matches recorded on this device yet.';
+    historyEl.append(li);
+    return;
+  }
+  for (const entry of history) {
+    const li = document.createElement('li');
+    const who = entry.winner === 'player' ? 'Player' : entry.winner === 'rival' ? 'Rival' : 'Draw';
+    li.textContent = `${entry.seed} · ${entry.mode} · ${who} · ${entry.reason} · crowns ${entry.crowns?.player ?? 0}–${entry.crowns?.rival ?? 0} · ${entry.turns} turns`;
+    historyEl.append(li);
+  }
+}
+
+/* ---------- export ---------- */
+function exportPng() {
+  const scale = 24;
+  const pad = 12;
+  const size = SIZE * scale + pad * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size + 34;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) { announce('This browser cannot export a PNG.'); return; }
+  ctx.fillStyle = '#07070c';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < CELL_COUNT; index += 1) {
+    const cell = game.cells[index];
+    const { x, y } = coordsOf(index);
+    const px = pad + x * scale;
+    const py = pad + y * scale;
+    ctx.fillStyle = cell.owner === 'player' ? '#3a2a7a' : cell.owner === 'rival' ? '#6d4410' : '#0d0d16';
+    ctx.fillRect(px, py, scale - 1, scale - 1);
+    ctx.strokeStyle = 'rgba(242,239,228,0.18)';
+    ctx.strokeRect(px + 0.5, py + 0.5, scale - 2, scale - 2);
+    if (cell.crown) {
+      ctx.strokeStyle = '#f2efe4';
+      ctx.beginPath();
+      ctx.moveTo(px + 4, py + scale - 6);
+      ctx.lineTo(px + 4, py + 6);
+      ctx.lineTo(px + scale / 2 - 3, py + 10);
+      ctx.lineTo(px + scale / 2 - 0.5, py + 4);
+      ctx.lineTo(px + scale / 2 + 2, py + 10);
+      ctx.lineTo(px + scale - 5, py + 6);
+      ctx.lineTo(px + scale - 5, py + scale - 6);
+      ctx.stroke();
+    }
+    if (cell.grains > 0) {
+      ctx.fillStyle = cell.owner === 'rival' ? '#ffe6bd' : '#e8ddff';
+      ctx.font = `bold ${Math.round(scale * 0.5)}px ui-monospace, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(cell.grains), px + scale / 2, py + scale / 2 + 1);
+    }
+  }
+  ctx.fillStyle = '#f2efe4';
+  ctx.font = '13px ui-sans-serif, system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(`CROWN//FALL  ${formatShare(game)}`, pad, size + 20);
+  const link = document.createElement('a');
+  link.download = `crownfall-${game.seed}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+  announce('Board exported as a PNG download.');
+}
+
+async function copyShare() {
+  const text = formatShare(game);
+  shareOut.value = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    announce(`Result string copied: ${text}`);
+  } catch (error) {
+    shareOut.focus();
+    shareOut.select();
+    announce(`Copy blocked by the browser — the result string is selected for you: ${text}`);
+  }
+}
+
+/* ---------- misc controls ---------- */
+function togglePause() {
+  paused = !paused;
+  pauseBtn.setAttribute('aria-pressed', String(paused));
+  pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  if (paused) window.clearTimeout(aiTimer);
+  else maybeScheduleAi();
+  announce(paused ? 'Paused. The rival will not move and animations are suspended.' : 'Resumed.');
+}
+
+function toggleHelp(show) {
+  helpEl.hidden = !show;
+  helpBtn.setAttribute('aria-expanded', String(show));
+  if (show) helpEl.querySelector('h2').setAttribute('tabindex', '-1');
+  if (show) helpEl.querySelector('h2').focus();
+}
+
+readBtn.addEventListener('click', doRead);
+pauseBtn.addEventListener('click', togglePause);
+helpBtn.addEventListener('click', () => toggleHelp(helpEl.hidden));
+el('new-seeded').addEventListener('click', () => startGame(seedInput.value));
+el('new-random').addEventListener('click', () => startGame(randomSeed()));
+el('replay').addEventListener('click', () => {
+  startGame(game.seed, { message: `Replaying seed ${game.seed} from the opening position — same board, same crowns, same grain field.` });
+});
+el('export').addEventListener('click', exportPng);
+el('share').addEventListener('click', copyShare);
+el('clear-history').addEventListener('click', () => {
+  history = [];
+  saveHistory();
+  renderHistory();
+  announce('Local match history cleared.');
+});
+modeSelect.addEventListener('change', () => startGame(seedInput.value));
+seedInput.addEventListener('change', () => { seedInput.value = normalizeSeed(seedInput.value); });
+
+renderHistory();
+startGame(seedInput.value, { message: 'Welcome. Place a grain on your base or the neutral ground touching it. Press H for the rules.' });
+</script>
+</body>
+</html>
