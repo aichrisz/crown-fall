@@ -88,7 +88,7 @@ Its limits, honestly:
 | Enter or Space | Place a grain on the focused cell |
 | R | Spend a READ charge on the focused cell |
 | N | New match on the seed in the box |
-| P | Pause (stops the rival and animations) |
+| P | Pause (freezes placements, the rival, and animations) |
 | H | Open or close the rules panel |
 | Escape | Close the rules panel |
 
